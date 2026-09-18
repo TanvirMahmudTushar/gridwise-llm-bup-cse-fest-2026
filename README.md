@@ -1,7 +1,7 @@
 # GridWise LLM: BUP CSE Fest 2026 Hackathon (Preliminary)
 
-LLM-assisted operator-directive interpretation and 24-hour campus energy cost optimization.
-Implements the full pipeline required by the Problem Statement.
+LLM assisted operator directive interpretation and 24 hour campus energy cost optimization.
+Implements the pipeline required by the Problem Statement.
 
 ## System architecture
 
@@ -19,52 +19,50 @@ flowchart TD
 
 Human notes are never trusted directly as math. They pass through the LLM interpreter, then a
 deterministic guardrail layer, before anything reaches the optimizer. The final validator then
-independently re-checks the optimizer's own output before it is returned.
+independently rechecks the optimizer's own output before it is returned.
 
-## Architecture and implementation choices
+## Implementation choices
 
-- **Language/framework:** Python 3.12, FastAPI + Uvicorn.
-- **LLM:** Groq-hosted `openai/gpt-oss-120b` (configurable via `GROQ_MODEL`), called through the official `groq` Python SDK using JSON-mode structured output. The LLM is the only component that interprets `operator_notes` free text. It is mandatory on the request path per the Problem Statement, never used only for `plan_summary`.
+- **Language and framework:** Python 3.12, FastAPI and Uvicorn.
+- **LLM:** Groq hosted `openai/gpt-oss-120b` (configurable via `GROQ_MODEL`), called through the official `groq` Python SDK using JSON mode structured output. The LLM is the only component that interprets `operator_notes` free text. It is mandatory on the request path per the Problem Statement, never used only for `plan_summary`.
 - **Guardrails:** Pure deterministic Python (`app/guardrails.py`). Every field of the LLM's JSON output is validated against the exact shape required for its `directive_type` (Problem Statement Section 04/08) before anything reaches the optimizer. The LLM is never trusted directly.
-- **Optimizer:** A true linear program built with [PuLP](https://coin-or.github.io/pulp/) and solved with the bundled CBC solver, not a heuristic, so cost is genuinely minimal subject to all GridWise energy/battery rules and every applicable directive (Problem Statement Section 05.2/09). This directly targets the Optimization Quality score, which is `min(1, organizer_optimal_cost / recalculated_team_cost)`.
-- **Final validator:** `app/replay_validator.py` independently re-derives energy balance, battery bounds/rate limits, every directive constraint, and the reported totals from the *optimizer's own output*, with no shared code path to the optimizer. If it ever disagrees, the service returns a controlled 500 instead of a plan that might violate a constraint. This is defense in depth against an optimizer bug.
+- **Optimizer:** A true linear program built with [PuLP](https://coin-or.github.io/pulp/) and solved with the bundled CBC solver, not a heuristic, so cost is genuinely minimal subject to all GridWise energy and battery rules and every applicable directive (Problem Statement Section 05.2/09). This targets the Optimization Quality score, which is `min(1, organizer_optimal_cost / recalculated_team_cost)`.
+- **Final validator:** `app/replay_validator.py` independently rederives energy balance, battery bounds and rate limits, every directive constraint, and the reported totals from the optimizer's own output, with no shared code path to the optimizer. If it ever disagrees, the service returns a controlled 500 instead of a plan that might violate a constraint.
 
-## Safe-failure design (Problem Statement Section 08 "SAFE FAILURE")
+## Safe failure design (Problem Statement Section 08)
 
-- If the Groq call fails entirely (timeout, outage, invalid credentials) after one retry, the service does **not** crash or invent a directive. Every operator note for that request is deterministically downgraded to `no_op`, and a valid, cost-optimal (unconstrained) 24-hour schedule is still returned with HTTP 200.
-- If the LLM returns JSON but a specific note's entry is malformed, missing, has an unsupported `directive_type`, or has an out-of-range/wrong-shaped `structured_adjustment` (e.g. a reserve above battery capacity, a `factor` outside `[0,1]`, an hour outside `0-23`), **only that note** falls back to `no_op`. Other, validly-interpreted notes in the same request are still applied normally.
-- This is a deliberate trade-off: a wrong *invented* directive risks failing Directive Application & Constraint Correctness (25 pts) and the Critical Violations rules, while a safe `no_op` only loses partial interpretation credit for the one affected note. See `app/guardrails.py` module docstring for the full rationale.
-- Malformed/structurally invalid request JSON returns HTTP 400 (not the FastAPI default of 422; overridden in `app/main.py` to match the Problem Statement's API contract exactly).
-- Any unexpected internal error returns HTTP 500 with a generic `{"detail": "internal error"}` body. Stack traces and secrets are never included in logs sent to stdout in a way that reaches the response, per the Participant Guide's secret-handling requirement.
+- If the Groq call fails entirely (timeout, outage, invalid credentials) after one retry, the service does not crash or invent a directive. Every operator note for that request is deterministically downgraded to `no_op`, and a valid, cost optimal (unconstrained) 24 hour schedule is still returned with HTTP 200.
+- If the LLM returns JSON but a specific note's entry is malformed, missing, has an unsupported `directive_type`, or has an out of range or wrong shaped `structured_adjustment` (for example a reserve above battery capacity, a `factor` outside `[0,1]`, an hour outside `0 through 23`), only that note falls back to `no_op`. Other, validly interpreted notes in the same request still apply.
+- A wrong invented directive risks failing Directive Application & Constraint Correctness (25 pts) and the Critical Violations rules, while a safe `no_op` only loses partial interpretation credit for the one affected note. See the `app/guardrails.py` module docstring for the full rationale.
+- Malformed or structurally invalid request JSON returns HTTP 400 (the Problem Statement's contract; overridden in `app/main.py` from FastAPI's default of 422).
+- Any unexpected internal error returns HTTP 500 with a generic `{"detail": "internal error"}` body. Stack traces and secrets are never included in a response.
 
 ## Setup
 
 ### Requirements
-- Python 3.12+ (only 3.12 has been tested; 3.11+ should work)
+- Python 3.12 or newer (3.12 is the version tested; 3.11 should also work)
 - A [Groq](https://console.groq.com/keys) API key
 
 ### Environment variables
 
-Copy `.env.example` to `.env` and fill in your own key locally. **Never commit `.env`.**
+Copy `.env.example` to `.env` and fill in your own key locally. Never commit `.env`.
 
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
-| `GROQ_API_KEY` | yes | none | Groq API key used for operator-note interpretation |
+| `GROQ_API_KEY` | yes | none | Groq API key used for operator note interpretation |
 | `GROQ_MODEL` | no | `openai/gpt-oss-120b` | Groq model id |
-| `LLM_TIMEOUT_SECONDS` | no | `10` | Per-call Groq client timeout |
+| `LLM_TIMEOUT_SECONDS` | no | `10` | Per call Groq client timeout |
 | `REQUEST_TIMEOUT_SECONDS` | no | `25` | Hard ceiling for the whole `/optimize-energy` request |
 | `PORT` | no | `8000` | Port the service listens on |
 
-### Local quickstart (clean environment)
+### Local quickstart
 
 ```bash
-git clone <this repo>
-cd <this repo>
+git clone https://github.com/TanvirMahmudTushar/gridwise-llm-bup-cse-fest-2026.git
+cd gridwise-llm-bup-cse-fest-2026
 python -m venv .venv
-# Windows (Git Bash):
-source .venv/Scripts/activate
-# macOS/Linux:
-# source .venv/bin/activate
+source .venv/Scripts/activate   # Windows Git Bash
+# source .venv/bin/activate     # macOS/Linux
 
 pip install -r requirements.txt
 cp .env.example .env   # then edit .env and set GROQ_API_KEY
@@ -79,7 +77,7 @@ curl http://localhost:8000/health
 # {"status":"ok"}
 ```
 
-For a real sample request, extract one case's `input` object from the public sample pack, e.g.:
+For a real sample request, extract one case's `input` object from the public sample pack:
 
 ```bash
 python -c "
@@ -95,26 +93,25 @@ curl -X POST http://localhost:8000/optimize-energy \
 ### Running tests
 
 ```bash
-pip install -r requirements.txt   # includes pytest
-pytest                            # runs guardrail/optimizer/API-contract tests (no network needed)
-GROQ_API_KEY=your_key pytest tests/test_public_samples.py   # live end-to-end check against all 10 public cases
+pip install -r requirements.txt
+pytest                                                          # guardrail, optimizer, and API contract tests, no network needed
+GROQ_API_KEY=your_key pytest tests/test_public_samples.py       # live check against all 10 public cases
+GROQ_API_KEY=your_key pytest tests/test_paraphrase_robustness.py  # live check with wording outside the public pack
 ```
 
-- `tests/test_guardrails.py`, `tests/test_optimizer.py`: pure unit tests, no network, no API key required.
-- `tests/test_api_contract.py`: schema/status-code tests against the FastAPI app with the LLM call monkeypatched out (no network required).
-- `tests/test_public_samples.py`: end-to-end against the real Groq API and all 10 public sample cases. **Automatically skipped** if `GROQ_API_KEY` is not set (e.g. in CI). Run it locally with a real key before submitting. It does not byte-for-byte compare against the packaged reference numbers (per the sample pack's own instructions); it checks self-consistency of the returned plan, directive-interpretation semantics against ground truth within tolerance, and that the reported cost does not exceed an independently-recomputed optimum for the ground-truth directives.
-- `tests/test_paraphrase_robustness.py`: end-to-end against the real Groq API using hand-authored operator notes that deliberately avoid the public sample pack's exact wording (24-hour clock times, indirect/passive phrasing, different units, a novel distractor), guarding against the LLM prompt overfitting to the public examples instead of generalizing. Also skipped automatically without `GROQ_API_KEY`.
-
-Confirmed passing against the live Groq API during development: all 10 public cases, plus a 5-request concurrent batch against the deployed endpoint (all 200s, no failures), plus the paraphrase-robustness cases above (all correctly interpreted and self-consistent). Several cases checked manually over real HTTP against the deployed instance, including exact matches on `total_grid_kwh`/`total_cost_bdt`/`peak_grid_kwh` against the packaged reference values, with typical request latency around 1.5-2.5s (well within the top p95 scoring tier). Note: cost-optimal schedules are not always unique, so an alternate valid optimum can report a different `peak_grid_kwh` than the packaged reference while still matching `total_cost_bdt` exactly and passing independent replay validation; this is expected LP behavior, not a defect (see the Problem Statement's equivalence_note).
+- `tests/test_guardrails.py`, `tests/test_optimizer.py`: unit tests, no network or API key required.
+- `tests/test_api_contract.py`: schema and status code tests with the LLM call replaced by a stub, no network required.
+- `tests/test_public_samples.py`: end to end against the real Groq API and all 10 public sample cases. Skipped automatically if `GROQ_API_KEY` is not set. Does not compare byte for byte against the packaged reference numbers, per the sample pack's own instructions; it checks self consistency of the returned plan, directive interpretation semantics against ground truth within tolerance, and that the reported cost does not exceed an independently recomputed optimum for the ground truth directives.
+- `tests/test_paraphrase_robustness.py`: end to end against the real Groq API using operator notes worded differently from the public pack (24 hour clock times, indirect phrasing, different units, a distractor not seen before), to guard against the prompt overfitting to the public wording. Also skipped automatically without `GROQ_API_KEY`.
 
 ## Docker fallback image
 
-Pull the pre-built, pushed image (recommended for judges/organizers):
+Pull the prebuilt, pushed image:
 
 ```bash
 docker pull tanvirmahmud/gridwise-llm:v1
 docker run --rm -p 8000:8000 \
-  -e GROQ_API_KEY=<your-groq-key> \
+  -e GROQ_API_KEY=your_groq_key \
   -e GROQ_MODEL=openai/gpt-oss-120b \
   tanvirmahmud/gridwise-llm:v1
 curl http://localhost:8000/health
@@ -122,7 +119,7 @@ curl http://localhost:8000/health
 
 Exact digest: `tanvirmahmud/gridwise-llm@sha256:712fdfafe17b09aa8b143a4c627f6ed1b0f065e43404a5a0923ac0b8b0c26c36`
 
-Or build it yourself from source:
+Or build it from source:
 
 ```bash
 docker build -t gridwise-llm .
@@ -130,32 +127,31 @@ docker run --rm -p 8000:8000 --env-file .env gridwise-llm
 curl http://localhost:8000/health
 ```
 
-The image exposes port 8000, binds `0.0.0.0`, and contains no baked-in secrets. All configuration is supplied at `docker run` time via `--env-file` or `-e`. Verified end-to-end: `docker build` succeeds locally, and the pushed image was independently verified by removing all local copies, pulling it fresh from Docker Hub, and confirming `/health` and a real `/optimize-energy` request (exact-match totals against the public sample pack) both work against the freshly-pulled container. Its filesystem contains no `.env`/secret files (`.dockerignore` excludes `.venv/`, `.env*`, tests, and the Problem Statement PDFs from the build context).
+The image exposes port 8000, binds `0.0.0.0`, and contains no baked in secrets. Verified end to end: the pushed image was pulled fresh onto a clean machine and confirmed working against `/health` and a real `/optimize-energy` request, with totals matching the public sample pack exactly.
 
 ## Deploying publicly
 
-Deploy the `Dockerfile` as-is to any reachable host (Render, Railway, Fly.io, a VPS, etc.), no code changes needed. In short:
+Deploy the `Dockerfile` as is to any reachable host, no code changes needed.
 
-1. Create a GitHub repo **after** question reveal, push this code, keep it **private** during the event, make it **public** only after the submission deadline (Participant Guide repo policy). Confirm `.env` is not in the pushed repo.
-2. Point your host at the repo/Dockerfile and set `GROQ_API_KEY`, `GROQ_MODEL`, `LLM_TIMEOUT_SECONDS`, `REQUEST_TIMEOUT_SECONDS` as environment variables in the host's dashboard. Never commit them.
+1. Create a GitHub repository after question reveal, push this code, keep it private during the event, make it public only after the submission deadline (Participant Guide repository policy). Confirm `.env` is not in the pushed repository.
+2. Point the host at the repository or Dockerfile and set `GROQ_API_KEY`, `GROQ_MODEL`, `LLM_TIMEOUT_SECONDS`, `REQUEST_TIMEOUT_SECONDS` as environment variables in the host's dashboard. Never commit them.
 3. Set the host's health check path to `/health` if it supports one.
-4. Verify both endpoints from outside your network once deployed (`curl <base-url>/health`, then a `POST /optimize-energy` with a public sample case).
-5. If using a scale-to-zero free tier, be aware a request after 15+ minutes idle can cold-start slowly. `.github/workflows/keep-warm.yml` pings `/health` every 10 minutes to prevent this; enable it (or use an always-on paid tier) before judging starts.
+4. Verify both endpoints from outside your network once deployed.
+5. If the host has a free tier that idles down after inactivity, the included `.github/workflows/keep-warm.yml` pings `/health` every 10 minutes to prevent that specific cold start. This does not address the separate concurrency limitation below; it only keeps a single idle instance from being unloaded.
 
 ## Dependencies
 
-See `requirements.txt`:
 - `fastapi`, `uvicorn[standard]`: HTTP service
-- `pydantic`: request/response schema validation
-- `pulp`: linear programming optimizer (bundled CBC solver, no external binary install needed)
+- `pydantic`: request and response schema validation
+- `pulp`: linear programming optimizer, with the CBC solver bundled
 - `groq`: official Groq SDK for LLM calls
 - `python-dotenv`: loads `.env` for local development
 - `httpx`, `pytest`: test tooling
 
 ## Known limitations
 
-- The Groq API is a hosted, third-party dependency. If it is unreachable or misconfigured (missing/invalid `GROQ_API_KEY`), the service still responds correctly (HTTP 200) but treats every operator note as `no_op`, per the safe-failure design above. It cannot apply directives it was never able to interpret.
-- The guardrail's safe-fallback-to-`no_op` policy for a single malformed note (see "Safe-failure design" above) means a note that *should* have mapped to a real directive, but whose LLM output failed shape/range validation, is scored as an interpretation miss for that note rather than retried indefinitely. This keeps latency and reliability within the Participant Guide's p95/timeout budget.
-- Request numeric fields (`demand_kwh`, `tariff_bdt_per_kwh`, battery values, etc.) explicitly reject `Infinity`/`NaN` (`allow_inf_nan=False`) in addition to non-negativity, since Python's `json` module accepts those non-standard literals by default and a plain `>= 0` constraint alone would let `Infinity` through undetected.
-- If a scale-to-zero free host tier is used for deployment, a request landing after 15+ minutes of inactivity can cold-start slowly. See "Deploying publicly" above for a mitigation.
-- No authentication/rate limiting is implemented, per the Problem Statement's requirement that judging needs no login/VPN/dashboard access.
+- The Groq API is a hosted, third party dependency. If it is unreachable or misconfigured, the service still responds correctly (HTTP 200) but treats every operator note as `no_op`, since it cannot apply a directive it was never able to interpret.
+- A single malformed note falls back to `no_op` rather than being retried indefinitely, to keep latency and reliability within the Participant Guide's budget. This trades a small amount of interpretation credit on that one note for guaranteed availability.
+- Request numeric fields explicitly reject `Infinity` and `NaN` in addition to non negative values, since Python's `json` module accepts those nonstandard literals by default and a plain `>= 0` check alone would not catch them.
+- Under concurrent load, response latency was measured to be significantly worse than under sequential load on the current free tier host (roughly 1.5 to 2.5 seconds sequentially, versus a measured worst case above 20 seconds with 10 simultaneous requests). This was isolated to the host's own CPU allocation, not the application code or the Groq API: 10 concurrent calls fired directly at Groq, bypassing the app entirely, completed in a tight band with no degradation. If the judging harness sends requests with meaningful concurrency, this could cost latency tier points even though every request still completes correctly. An upgrade to a host tier with dedicated compute would remove this risk; it was not pursued further given the scope of the event.
+- No authentication or rate limiting is implemented, since the Problem Statement requires judging without a login, VPN, or dashboard access.
