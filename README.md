@@ -1,7 +1,10 @@
-# GridWise LLM: BUP CSE Fest 2026 Hackathon (Preliminary)
+# GridWise LLM
 
 LLM assisted operator directive interpretation and 24 hour campus energy cost optimization.
 Implements the pipeline required by the Problem Statement.
+
+**Live deployment (base URL):** `https://gridwise-llm-bup-cse-fest-2026.onrender.com`
+Both required endpoints are reachable from that base: `GET /health` and `POST /optimize-energy`.
 
 ## System architecture
 
