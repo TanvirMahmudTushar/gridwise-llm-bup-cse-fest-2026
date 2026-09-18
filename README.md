@@ -103,10 +103,26 @@ GROQ_API_KEY=your_key pytest tests/test_public_samples.py   # live end-to-end ch
 - `tests/test_guardrails.py`, `tests/test_optimizer.py`: pure unit tests, no network, no API key required.
 - `tests/test_api_contract.py`: schema/status-code tests against the FastAPI app with the LLM call monkeypatched out (no network required).
 - `tests/test_public_samples.py`: end-to-end against the real Groq API and all 10 public sample cases. **Automatically skipped** if `GROQ_API_KEY` is not set (e.g. in CI). Run it locally with a real key before submitting. It does not byte-for-byte compare against the packaged reference numbers (per the sample pack's own instructions); it checks self-consistency of the returned plan, directive-interpretation semantics against ground truth within tolerance, and that the reported cost does not exceed an independently-recomputed optimum for the ground-truth directives.
+- `tests/test_paraphrase_robustness.py`: end-to-end against the real Groq API using hand-authored operator notes that deliberately avoid the public sample pack's exact wording (24-hour clock times, indirect/passive phrasing, different units, a novel distractor), guarding against the LLM prompt overfitting to the public examples instead of generalizing. Also skipped automatically without `GROQ_API_KEY`.
 
-Confirmed passing against the live Groq API during development, including two cases (SAMPLE-09, SAMPLE-10) checked manually over real HTTP and via the built Docker image, both returning `total_grid_kwh`/`total_cost_bdt`/`peak_grid_kwh` identical to the packaged reference values, with request latency around 1.5-2.5s (well within the top p95 scoring tier).
+Confirmed passing against the live Groq API during development: all 10 public cases, plus a 5-request concurrent batch against the deployed endpoint (all 200s, no failures), plus the paraphrase-robustness cases above (all correctly interpreted and self-consistent). Several cases checked manually over real HTTP against the deployed instance, including exact matches on `total_grid_kwh`/`total_cost_bdt`/`peak_grid_kwh` against the packaged reference values, with typical request latency around 1.5-2.5s (well within the top p95 scoring tier). Note: cost-optimal schedules are not always unique, so an alternate valid optimum can report a different `peak_grid_kwh` than the packaged reference while still matching `total_cost_bdt` exactly and passing independent replay validation; this is expected LP behavior, not a defect (see the Problem Statement's equivalence_note).
 
 ## Docker fallback image
+
+Pull the pre-built, pushed image (recommended for judges/organizers):
+
+```bash
+docker pull tanvirmahmud/gridwise-llm:v1
+docker run --rm -p 8000:8000 \
+  -e GROQ_API_KEY=<your-groq-key> \
+  -e GROQ_MODEL=openai/gpt-oss-120b \
+  tanvirmahmud/gridwise-llm:v1
+curl http://localhost:8000/health
+```
+
+Exact digest: `tanvirmahmud/gridwise-llm@sha256:712fdfafe17b09aa8b143a4c627f6ed1b0f065e43404a5a0923ac0b8b0c26c36`
+
+Or build it yourself from source:
 
 ```bash
 docker build -t gridwise-llm .
@@ -114,7 +130,7 @@ docker run --rm -p 8000:8000 --env-file .env gridwise-llm
 curl http://localhost:8000/health
 ```
 
-The image exposes port 8000, binds `0.0.0.0`, and contains no baked-in secrets. All configuration is supplied at `docker run` time via `--env-file` or `-e`. Verified end-to-end locally: `docker build` succeeds, the container serves `/health` and correctly-computed `/optimize-energy` responses (confirmed against public sample cases with exact-match totals), and its filesystem contains no `.env`/secret files (`.dockerignore` excludes `.venv/`, `.env*`, tests, and the Problem Statement PDFs from the build context).
+The image exposes port 8000, binds `0.0.0.0`, and contains no baked-in secrets. All configuration is supplied at `docker run` time via `--env-file` or `-e`. Verified end-to-end: `docker build` succeeds locally, and the pushed image was independently verified by removing all local copies, pulling it fresh from Docker Hub, and confirming `/health` and a real `/optimize-energy` request (exact-match totals against the public sample pack) both work against the freshly-pulled container. Its filesystem contains no `.env`/secret files (`.dockerignore` excludes `.venv/`, `.env*`, tests, and the Problem Statement PDFs from the build context).
 
 ## Deploying publicly
 

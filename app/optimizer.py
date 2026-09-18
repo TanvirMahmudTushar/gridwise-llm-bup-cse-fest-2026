@@ -43,9 +43,19 @@ class OptimizationResult:
 
 def _effective_solar(hours: list[HourEntry], directives: ParsedDirectives) -> list[float]:
     effective = [h.solar_kwh for h in hours]
+    # If two different notes both reduce solar for the same hour (not
+    # expected under the Problem Statement's "no contradictory directives"
+    # guarantee, but not explicitly forbidden either), combine via the
+    # strictest factor rather than letting the last-processed directive
+    # silently overwrite the others -- same "strictest wins" principle
+    # already used for reserve/grid-cap combination below, and removes an
+    # otherwise order-dependent, non-deterministic result.
+    factor_by_hour: dict[int, float] = {}
     for reduction in directives.solar_reductions:
         for hour in reduction.hours:
-            effective[hour] = hours[hour].solar_kwh * reduction.factor
+            factor_by_hour[hour] = min(factor_by_hour.get(hour, 1.0), reduction.factor)
+    for hour, factor in factor_by_hour.items():
+        effective[hour] = hours[hour].solar_kwh * factor
     return effective
 
 

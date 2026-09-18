@@ -22,9 +22,15 @@ _TOL = 0.01  # Problem Statement Section 11.5 numeric tolerance.
 
 def _effective_solar(hours: list[HourEntry], directives: ParsedDirectives) -> list[float]:
     effective = [h.solar_kwh for h in hours]
+    # Must match app/optimizer.py's combination rule exactly (strictest
+    # factor wins on overlap) or this independent replay check would
+    # disagree with the optimizer and flag a false violation.
+    factor_by_hour: dict[int, float] = {}
     for reduction in directives.solar_reductions:
         for hour in reduction.hours:
-            effective[hour] = hours[hour].solar_kwh * reduction.factor
+            factor_by_hour[hour] = min(factor_by_hour.get(hour, 1.0), reduction.factor)
+    for hour, factor in factor_by_hour.items():
+        effective[hour] = hours[hour].solar_kwh * factor
     return effective
 
 
