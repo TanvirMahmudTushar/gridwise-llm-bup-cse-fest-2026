@@ -124,7 +124,7 @@ Deploy the `Dockerfile` as-is to any reachable host (Render, Railway, Fly.io, a 
 2. Point your host at the repo/Dockerfile and set `GROQ_API_KEY`, `GROQ_MODEL`, `LLM_TIMEOUT_SECONDS`, `REQUEST_TIMEOUT_SECONDS` as environment variables in the host's dashboard. Never commit them.
 3. Set the host's health check path to `/health` if it supports one.
 4. Verify both endpoints from outside your network once deployed (`curl <base-url>/health`, then a `POST /optimize-energy` with a public sample case).
-5. If using a scale-to-zero free tier, be aware a request after 15+ minutes idle can cold-start slowly. Either keep the service warm with a periodic `/health` ping during the judging window, or use an always-on tier.
+5. If using a scale-to-zero free tier, be aware a request after 15+ minutes idle can cold-start slowly. `.github/workflows/keep-warm.yml` pings `/health` every 10 minutes to prevent this; enable it (or use an always-on paid tier) before judging starts.
 
 ## Dependencies
 
